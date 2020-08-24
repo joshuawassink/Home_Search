@@ -260,25 +260,3 @@ headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_5)'
            'q=0.9,image/webp,*/*;q=0.8'}
 
 data = scrapeCity('Los Angeles')
-
-
-LA = pd.DataFrame(data)
-
-
-"""Messing around"""
-# Request the url data
-req = Request(url, headers=headers)
-# Open and read the data
-webpage = urlopen(req).read()
-webpage
-# parse the data
-
-
-parser = html.fromstring(webpage)
-raw_json_data = parser.xpath(
-    '//script[@data-zrr-shared-data-key="mobileSearchPageStore"]//text()')
-# Remove formatting strings
-cleaned_data = clean(raw_json_data).replace('<!--', "").replace("-->", "")
-# Convert data to json format
-json_data = json.loads(cleaned_data)
-jason_data = json_data['searchResults']['listResults']

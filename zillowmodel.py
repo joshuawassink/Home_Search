@@ -22,6 +22,7 @@ from sklearn.svm import SVR
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import Lasso
 from sklearn.linear_model import ElasticNet
+from sklearn.pipeline import make_pipeline
 import sys
 import sklearn
 import numpy as np
@@ -89,7 +90,7 @@ zillow.plot(kind='scatter', x='longitude', y='latitude', alpha=.1, s=zillow['liv
 
 # Drop uninformative variables
 zillow_prep = zillow.drop(['Unnamed: 0', 'imageLink', 'contactPhone', 'isUnmappable', 'rentalPetsFlags', 'mediumImageLink', 'hiResImageLink', 'watchImageLink', 'contactPhoneExtension', 'tvImageLink', 'tvCollectionImageLink', 'price', 'tvHighResImageLink', 'zillowHasRightsToImages', 'moveInReady', 'priceForHDP', 'title', 'group_type', 'openHouse',
-                           'isListingOwnedByCurrentSignedInAgent', 'brokerId', 'grouping_name', 'priceSuffix',
+                           'isListingOwnedByCurrentSignedInAgent', 'brokerId', 'grouping_name', 'priceSuffix', 'zestimate',
                            'desktopWebHdpImageLink', 'hideZestimate', 'streetAddressOnly', 'unit', 'open_house_info', 'providerListingID', 'newConstructionType', 'datePriceChanged', 'dateSold', 'streetAddress', 'city', 'state', 'timeOnZillow', 'currency', 'country', 'priceChange', 'isRentalWithBasePrice',
                            'isListingClaimedByCurrentSignedInUser', 'lotId', 'lotId64', 'shouldHighlight', 'isPreforeclosureAuction', 'grouping_id', 'comingSoonOnMarketDate', 'url'], axis=1)
 zillow_prep.shape
@@ -129,7 +130,6 @@ zillow_prep.drop('yearBuilt', inplace=True, axis=1)
 cat_cols = list(zillow_prep.drop(num_cols, axis=1).columns)
 zillow_prep[cat_cols].info()
 
-
 # First, recode and fix missingness
 zillow_prep.loc[zillow_prep['listing_sub_type'].str.contains('FSBO'), 'listing_sub_type'] = 1
 zillow_prep.loc[zillow_prep['listing_sub_type'] != 1, 'listing_sub_type'] = 0
@@ -167,62 +167,67 @@ y = zillow.price
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=42)
 X_train.shape
 
+# First, check the linear model
+OLS = Pipeline(steps=[('preprocessor', preprocessor),
+                            ('regressor', LinearRegression())])
+OLS.fit(X_train, y_train)
+pred = OLS.predict(X_train)
+np.sqrt(mean_squared_error(y_train, pred))
+
+
+# Parameter grids
+ridge_grid = {'regressor__alpha': np.arange(0.5, 5, 0.5)}
+
+lasso_grid = {'regressor__alpha': np.arange(5, 50, 5)}
+
+enet_grid = {"regressor__alpha": np.arange(.008, .02, .001),
+                      "regressor__l1_ratio": np.arange(0.0, 0.5, 0.05),
+                      "regressor__max_iter": np.arange(20, 200, 20),
+                      }
+
+svm_grid =
+    # First try linear and rbf kernels
+    [{'regressor__C': np.arange(1300, 1600, 25),
+              'regressor__gamma': np.arange(1, 10, 1),
+              'regressor__kernel': ['linear', 'rbf']},
+    # First try linear and rbf kernels
+    {'regressor__C': np.arange(100, 1500, 100),
+              'regressor__gamma': np.arange(1, 10, 1),
+              'regressor__kernel': ['poly'],
+              'regressor_degree': [1, 2, 3, 4]}]
+
+
+rf_grid = [
+    # try 12 (3×4) combinations of hyperparameters
+    {'regressor__n_estimators': np.arange(
+        10, 100, 10), 'regressor__max_features': np.arange(5, 50, 5)},
+    # then try 6 (2×3) combinations with bootstrap set as False
+    {'regressor__bootstrap': [False], 'regressor__n_estimators': np.arange(
+        5, 15, 1), 'regressor__max_features': np.arange(5, 50, 5)},
+]
 
 # Models to compare
 models = [
-    ['lin_reg', LinearRegression()],
-    ['ridge', Ridge(alpha=1, solver='sag')],
-    ['lasso', Lasso(alpha=.1)],
-    ['enet', ElasticNet(alpha=.1, l1_ratio=.5)],
-    ['svm', SVR()]
-    ['rf', RandomForestRegressor(max_features=8, n_estimators=30)]
+    [Ridge(), ridge_grid],
+    [Lasso(), lasso_grid],
+    [ElasticNet(), enet_grid],
+    [SVR(), svm_grid],
+    [RandomForestRegressor(), rf_grid],
 ]
 
-# Fit a gridsearch to choose RF parameters
-rf = Pipeline(steps=[
-    ('preprocessor', preprocessor),
-    ('regressor', RandomForestRegressor())])
-
-rf_distribs = [
-    # try 12 (3×4) combinations of hyperparameters
-    {'regressor__n_estimators': [3, 10, 30], 'regressor__max_features': [2, 4, 6, 8]},
-    # then try 6 (2×3) combinations with bootstrap set as False
-    {'regressor__bootstrap': [False], 'regressor__n_estimators': [
-        3, 10], 'regressor__max_features': [2, 3, 4]},
-]
-
-svm_distribs = {
-    'kernel': ['linear', 'rbf'],
-    'C': reciprocal(20, 200000),
-    'gamma': expon(scale=1.0),
-}
-
-CV = GridSearchCV(rf, param_grid, cv=5)
-CV.fit(X_train, y_train)
-
-'regressor__max_features': 8, 'regressor__n_estimators': 30
-for mod, model in models:
-    name = mod
-    mod = Pipeline([
+# Use GridSearchCV to assess alterantive models
+results = {}
+for model, grid in models:
+    estimator = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('regressor', model), ])
-    mod.fit(X_train, y_train)
-    rmse = RMSE(mod)
-    print(name)
-    print(rmse)
+        ('regressor', model)
+    ])
+    CV = GridSearchCV(estimator, scoring='neg_root_mean_squared_error',
+                            param_grid=grid, cv=3)
+    results[type(model).__name__] = CV.fit(X_train, y_train)
 
-# Create a regressor to combine with the preprocessor
-model_specs = {}
-for name, reg in [['LE', LinearRegression()], ['RF', RandomForestRegressor()]]:
-    pipe = Pipeline(steps=[
-        ('preprocessor', preprocessor),
-        ('regressor', reg)])
-    pipe.fit(X_train, y_train)
-    pred = pipe.predict(X_test)
-    mse = mean_squared_error(y_test, pred)
-    rmse = np.sqrt(mse)
-    model_specs[name] = np.round(rmse, decimals=4)
-model_specs
+for key in results.keys():
+    print(key, ': ', results[key].best_params_)
 
 
 def RMSE(model, log=False):
@@ -239,10 +244,9 @@ def RMSE(model, log=False):
 # Examine predicted versus actual labels
 plt.scatter(y_test, y_pred, marker='o', alpha=.1, c=y_test, cmap=plt.get_cmap('jet'))
 
-# Plot the learning curve
-
 
 def plot_learning_curves(model, X, y):
+    """Plot the learning curve"""
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=10)
     train_errors, val_errors = [], []
     for m in range(1, len(X_train)):

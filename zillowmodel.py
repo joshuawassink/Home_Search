@@ -40,7 +40,7 @@ from zlib import crc32
 """Presets"""
 # Ignore useless warnings (see SciPy issue #5998)
 warnings.filterwarnings(action="ignore", message="^internal gelsd")
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+ZILLOW_PATH = os.path.join("datasets")
 np.random.seed(42)
 
 # To plot pretty figures
@@ -50,15 +50,12 @@ mpl.rc('ytick', labelsize=12)
 
 # Where to save the figures
 PROJECT_ROOT_DIR = "."
-PROJECT_ID = "zillow"
-IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, "images", PROJECT_ID)
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, "images")
 os.makedirs(IMAGES_PATH, exist_ok=True)
-
-# Function to save images
 
 
 def save_fig(fig_id, tight_layout=True, fig_extension="png", resolution=300):
+    """Function to save images"""
     path = os.path.join(IMAGES_PATH, fig_id + "." + fig_extension)
     print("Saving figure", fig_id)
     if tight_layout:
@@ -67,14 +64,7 @@ def save_fig(fig_id, tight_layout=True, fig_extension="png", resolution=300):
 
 
 def load_zillow_data(zillow_path=ZILLOW_PATH, data='zillow'):
-    """Load zillow data
-
-    Args:
-        zillow_path (str): path to the local directory where data will be stored
-
-    Returns:
-        Pandas DataFrame object
-    """
+    """Load zillow data"""
     csv_path = os.path.join(zillow_path, data+'.csv')
     return pd.read_csv(csv_path, index_col='zpid')
 
@@ -82,24 +72,27 @@ def load_zillow_data(zillow_path=ZILLOW_PATH, data='zillow'):
 """Load and prep data"""
 zillow = load_zillow_data(data='Los_Angeles')
 zillow.shape
+zillow.columns
 zillow.head()
 zillow.info()
 zillow.zipcode = pd.to_numeric(zillow.zipcode.str.strip())
-
 # Drop houses with missing price values
 zillow.dropna(subset=['price'], inplace=True)
 zillow = zillow[zillow.price < 5000000]
-zillow.columns
+# Drop wrong types of properties
+zillow = zillow[zillow['homeType'].isin(['SINGLE_FAMILY', 'MULTI_FAMILY', 'CONDO'])]
+
 """Create some spatial plots"""
-zillow.plot(kind='scatter', x='longitude', y='latitude', alpha=.1, s=zillow['lotSize']/1000,
+zillow.plot(kind='scatter', x='longitude', y='latitude', alpha=.1, s=zillow['livingArea']/50,
             label='Square feet', c='zestimate', cmap=plt.get_cmap('jet'), sharex=False, figsize=(10, 7), colorbar=True)
 
 
 # Drop uninformative variables
-zillow_prep = zillow.drop(['imageLink', 'contactPhone', 'isUnmappable', 'rentalPetsFlags', 'mediumImageLink', 'hiResImageLink', 'watchImageLink', 'contactPhoneExtension', 'tvImageLink', 'tvCollectionImageLink', 'price', 'tvHighResImageLink', 'zillowHasRightsToImages', 'moveInReady', 'priceForHDP', 'title', 'group_type', 'openHouse',
+zillow_prep = zillow.drop(['Unnamed: 0', 'imageLink', 'contactPhone', 'isUnmappable', 'rentalPetsFlags', 'mediumImageLink', 'hiResImageLink', 'watchImageLink', 'contactPhoneExtension', 'tvImageLink', 'tvCollectionImageLink', 'price', 'tvHighResImageLink', 'zillowHasRightsToImages', 'moveInReady', 'priceForHDP', 'title', 'group_type', 'openHouse',
                            'isListingOwnedByCurrentSignedInAgent', 'brokerId', 'grouping_name', 'priceSuffix',
                            'desktopWebHdpImageLink', 'hideZestimate', 'streetAddressOnly', 'unit', 'open_house_info', 'providerListingID', 'newConstructionType', 'datePriceChanged', 'dateSold', 'streetAddress', 'city', 'state', 'timeOnZillow', 'currency', 'country', 'priceChange', 'isRentalWithBasePrice',
-                           'isListingClaimedByCurrentSignedInUser', 'lotId', 'lotId64', 'shouldHighlight', 'isPreforeclosureAuction', 'grouping_id', 'comingSoonOnMarketDate'], axis=1)
+                           'isListingClaimedByCurrentSignedInUser', 'lotId', 'lotId64', 'shouldHighlight', 'isPreforeclosureAuction', 'grouping_id', 'comingSoonOnMarketDate', 'url'], axis=1)
+zillow_prep.shape
 # Numerical variables
 num_cols = list(zillow_prep.select_dtypes(include=['float', 'int64']).drop(
     ['videoCount', 'zipcode', 'yearBuilt'], axis=1).columns)
@@ -126,13 +119,16 @@ zillow_prep[num_cols].hist(bins=50, figsize=(20, 15))
 # save_fig("attribute_histogram_plots")
 
 ## Categorical variables ##
-cat_cols = list(zillow_prep.drop(num_cols, axis=1).columns)
-zillow_prep[cat_cols].info()
-
-# Clean up yearBuilt
+# First, clean up yearBuilt
 zillow_prep.yearBuilt.replace(-1, np.nan, inplace=True)
 zillow_prep['quants'] = pd.qcut(zillow_prep.yearBuilt, [0, .25, .5, .75, 1], labels=[1, 2, 3, 4])
 zillow_prep.pivot_table(values='yearBuilt', index=['quants'], aggfunc=[np.mean, 'count'])
+zillow_prep.drop('yearBuilt', inplace=True, axis=1)
+
+# List cat_cols
+cat_cols = list(zillow_prep.drop(num_cols, axis=1).columns)
+zillow_prep[cat_cols].info()
+
 
 # First, recode and fix missingness
 zillow_prep.loc[zillow_prep['listing_sub_type'].str.contains('FSBO'), 'listing_sub_type'] = 1
@@ -142,6 +138,8 @@ zillow_prep.loc[zillow_prep['priceReduction'].isnull() == 1, 'priceReduction'] =
 zillow_prep.loc[zillow_prep['priceReduction'] != 0, 'priceReduction'] = 1
 zillow_prep.loc[zillow_prep['videoCount'].isnull() == 1, 'videoCount'] = 0
 zillow_prep.loc[zillow_prep['videoCount'] != 0, 'videoCount'] = 1
+zillow_prep[cat_cols].info()
+
 # Cast categorical columns to strings prior to onehot transformation
 le = LabelEncoder()
 zillow_prep[cat_cols] = zillow_prep[cat_cols].applymap(str)
@@ -157,6 +155,7 @@ cat_pipeline = Pipeline(steps=[
     ('onehot', OneHotEncoder(handle_unknown='ignore'))
 ])
 
+# Instantiate a preprocessor
 preprocessor = ColumnTransformer(
     transformers=[
         ("num", num_pipeline, num_cols),
@@ -227,7 +226,6 @@ model_specs
 
 
 def RMSE(model, log=False):
-
 
 """Calculate the RMSE from a model"""
   pred = model.predict(X_test)

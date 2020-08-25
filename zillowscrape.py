@@ -23,7 +23,7 @@ os.getcwd()
 """Presets"""
 # Ignore useless warnings (see SciPy issue #5998)
 warnings.filterwarnings(action="ignore", message="^internal gelsd")
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+ZILLOW_PATH = os.path.join("datasets")
 os.makedirs(ZILLOW_PATH, exist_ok=True)  # Create data repository if necessary
 np.random.seed(42)
 

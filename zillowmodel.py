@@ -29,6 +29,9 @@ from sklearn.linear_model import Lasso
 from sklearn.linear_model import ElasticNet
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import PowerTransformer
+from sklearn.decomposition import PCA
+from sklearn.decomposition import KernelPCA
+from sklearn.cluster import KMeans
 import sys
 import sklearn
 import numpy as np
@@ -123,13 +126,13 @@ zillow_prep[num_cols].hist(bins=50, figsize=(20, 15))
 # save_fig("attribute_histogram_plots")
 
 # Log transform skewed variables
-"""for col in num_cols:
+for col in num_cols:
     span = zillow_prep[col].max()-zillow_prep[col].min()
     if span > 150:
         x = zillow_prep[col]
         x[x == 0] = .00001
         x = np.log10(x)
-        zillow_prep[col] = x"""
+        zillow_prep[col] = x
 
 # Plot the numerical variables again after log transformation
 zillow_prep[num_cols].hist(bins=50, figsize=(20, 15))
@@ -163,7 +166,8 @@ zillow_prep[cat_cols] = zillow_prep[cat_cols].applymap(str)
 num_pipeline = Pipeline(steps=[
     ('imputer', KNNImputer()),
     #('t', PolynomialFeatures(degree=2)),
-    ('std_scaler', StandardScaler())])
+    ('std_scaler', StandardScaler()),
+    ('pca', PCA(n_components=.9))])
 
 cat_pipeline = Pipeline(steps=[
     ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
@@ -182,6 +186,8 @@ y = zillow.price
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=42)
 X_train.shape
 X.info()
+
+
 # First, check the linear model
 OLS = Pipeline(steps=[('preprocessor', preprocessor),
                       ('regressor', LinearRegression())])
@@ -218,7 +224,6 @@ dt_grid = [{
     # 'regressor__min_weight_fraction_leaf' : ,
     # 'regressor__max_leaf_nodes' :
 }]
-CV_dt.best_params_
 rf_grid = [
     # try 12 (3×4) combinations of hyperparameters
     {'regressor__n_estimators': np.arange(
@@ -234,7 +239,7 @@ models = [
     [Lasso(), lasso_grid],
     [ElasticNet(), enet_grid],
     [SVR(), svm_grid],
-    [RandomForestRegressor(), rf_grid],
+    #[RandomForestRegressor(), rf_grid],
     [ExtraTreesRegressor(), rf_grid],
 ]
 
@@ -293,3 +298,34 @@ def plot_learning_curves(model, X, y):
 
 
 plot_learning_curves(lin_reg, X_prep, y)
+
+
+"""Clustering"""
+## Build a pipeline ##
+num_pipeline = Pipeline(steps=[
+    ('imputer', KNNImputer())])
+
+cat_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+price = zillow['price']
+zillow_cluster = zillow_prep.join(price, how='outer').drop_duplicates()
+num_cols.append('price')
+num_cols
+
+# Instantiate a preprocessor & transform the data
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", num_pipeline, num_cols),
+        ("cat", cat_pipeline, cat_cols)])
+zc_transformed = preprocessor.fit_transform(zillow_cluster)
+
+# Run a Kmeans classifier
+
+
+# Create a train test split
+X = zillow_cluster
+y = zillow.price
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=42)
+X_train.shape

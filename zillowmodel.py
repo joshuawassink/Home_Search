@@ -32,6 +32,7 @@ from sklearn.preprocessing import PowerTransformer
 from sklearn.decomposition import PCA
 from sklearn.decomposition import KernelPCA
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 import sys
 import sklearn
 import numpy as np
@@ -303,7 +304,8 @@ plot_learning_curves(lin_reg, X_prep, y)
 """Clustering"""
 ## Build a pipeline ##
 num_pipeline = Pipeline(steps=[
-    ('imputer', KNNImputer())])
+    ('imputer', KNNImputer()),
+    ('scaler', StandardScaler())])
 
 cat_pipeline = Pipeline(steps=[
     ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
@@ -312,7 +314,6 @@ cat_pipeline = Pipeline(steps=[
 price = zillow['price']
 zillow_cluster = zillow_prep.join(price, how='outer').drop_duplicates()
 num_cols.append('price')
-num_cols
 
 # Instantiate a preprocessor & transform the data
 preprocessor = ColumnTransformer(
@@ -322,10 +323,36 @@ preprocessor = ColumnTransformer(
 zc_transformed = preprocessor.fit_transform(zillow_cluster)
 
 # Run a Kmeans classifier
+kmeans = KMeans(n_clusters=5, random_state=42)
+y_pred = kmeans.fit_predict(zc_transformed)
+y_pred
+kmeans.cluster_centers_
+kmeans.inertia_
 
+# Let's try multiple numbers of clusters and look for an elbow
+kmeans_per_k = [KMeans(n_clusters=k, random_state=42).fit(zc_transformed)
+                for k in range(1, 10)]
+inertias = [model.inertia_ for model in kmeans_per_k]
 
-# Create a train test split
-X = zillow_cluster
-y = zillow.price
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=42)
-X_train.shape
+plt.figure(figsize=(8, 3.5))
+plt.plot(range(1, 10), inertias, "bo-")
+plt.xlabel("$k$", fontsize=14)
+plt.ylabel("Inertia", fontsize=14)
+"""plt.annotate('Elbow',
+             xy=(4, inertias[3]),
+             xytext=(0.55, 0.55),
+             textcoords='figure fraction',
+             fontsize=16,
+             arrowprops=dict(facecolor='black', shrink=0.1)
+            )
+plt.axis([1, 8.5, 0, 1300])"""
+
+# Plot the silhouette scores
+silhouette_scores = [silhouette_score(zc_transformed, model.labels_)
+                     for model in kmeans_per_k[1:]]
+
+plt.figure(figsize=(8, 3))
+plt.plot(range(2, 10), silhouette_scores, "bo-")
+plt.xlabel("$k$", fontsize=14)
+plt.ylabel("Silhouette score", fontsize=14)
+# Perhaps 4 is the optimal number of clusters.

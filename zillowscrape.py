@@ -270,9 +270,9 @@ LA = pd.DataFrame(data)
 req = Request(url, headers=headers)
 # Open and read the data
 webpage = urlopen(req).read()
-webpage
+bs = BeautifulSoup(webpage)
 # parse the data
-
+bs.prettify()
 
 parser = html.fromstring(webpage)
 raw_json_data = parser.xpath(

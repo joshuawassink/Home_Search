@@ -19,18 +19,28 @@ import urllib
 import pandas as pd
 from zlib import crc32
 from sklearn.model_selection import train_test_split
-os.getcwd()
+import argparse
+
 """Presets"""
 # Ignore useless warnings (see SciPy issue #5998)
 warnings.filterwarnings(action="ignore", message="^internal gelsd")
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+PROJECT_ROOT_DIR = "."
+ZILLOW_PATH = os.path.join(PROJECT_ROOT_DIR, "datasets")
 os.makedirs(ZILLOW_PATH, exist_ok=True)  # Create data repository if necessary
 np.random.seed(42)
 
 
 def save_csv(df, csv_id):
+    """Save dataframe to csv
+
+    Args:
+        df (obj): dataframe object to save
+        csv_id (str): name to give csv file
+    Returns:
+        None
+    """
     path = os.path.join(ZILLOW_PATH, csv_id + '.csv')
-    if not os.path.exists:
+    if not os.path.exists(path):
         print('Saving new CSV', csv_id)
         # Write the dataframe to CSV
         df.to_csv(path, index=True)
@@ -44,7 +54,21 @@ def save_csv(df, csv_id):
         df.to_csv(path, index=True)
 
 
+"""def save_csv(df, csv_id):
+    path = os.path.join(ZILLOW_PATH, csv_id + '.csv')
+    print('Saving CSV', csv_id)
+    df.to_csv(path, index=True)"""
+
+
 def clean(text):
+    """Clean extracted text
+
+    Args:
+        text (str): string object to clean
+
+    Returns:
+        cleaned string
+    """
     if text:
         return ' '.join(' '.join(text).split())
     return None
@@ -65,16 +89,32 @@ def printText(text):
 
 
 def cityState(zip):
+    """Obtain city_state identifiers corresponding to zip code
+
+    Args:
+        zip (str): quoted zipcode
+
+    Returns:
+        city_state string object
+    """
     city = zipcodes.matching(zip)[0]['city'].lower().replace(' ', '-')
     state = zipcodes.matching(zip)[0]['state'].lower()
     city_state = city+'-'+state
     return city_state
 
 
-cityState('90015')
-
-
 def create_url(zipcode, firstPage, i=None):
+    """Create zillow url
+
+    Args:
+        zipcode (str): Quoted zipcode
+        firstPage (Bool): True/False if url is first page
+        i (int): page number in search results
+
+    Returns:
+        String formatted url
+
+    """
     if firstPage:
         # Create first Zillow URL
         url = "https://www.zillow.com/homes/for_sale/{0}_rb/?fromHomePage=true&shouldFireSellPageImplicitClaimGA=false&fromHomePageTab=buy".format(
@@ -85,13 +125,16 @@ def create_url(zipcode, firstPage, i=None):
     return url
 
 
-def save_csv(df, csv_id):
-    path = os.path.join(ZILLOW_PATH, csv_id + '.csv')
-    print('Saving CSV', csv_id)
-    df.to_csv(path, index=True)
-
-
 def home_url(df):
+    """Create urls for each home in the dataframe
+
+    Args:
+        df (df): Pandas dataframe containg Zillow listings
+
+    Returns:
+        Pandas dataframe with additional url column
+
+    """
     df['base'] = 'https://www.zillow.com/homedetails/'
     df['addr'] = df.streetAddress.str.replace(' ', '-')
     df['url'] = df['base'].str.cat(df['addr'])
@@ -142,6 +185,14 @@ def get_url_pages(zipcode, firstPage=True, i=None):
 
 
 def get_jason(parser):
+    """Extract json listing data from Zillow url
+
+    Args:
+        parser (html parser): html parser returned by get_url_pages
+
+    returns:
+        json formatted data for each listing in zillow search results
+    """
     raw_json_data = parser.xpath(
         '//script[@data-zrr-shared-data-key="mobileSearchPageStore"]//text()')
     # Remove formatting strings
@@ -161,13 +212,13 @@ def get_jason(parser):
 
 
 def parse(zipcode):
-    """Scrape data about houses from Zillow
+    """Scrape data about houses from Zillow search results
 
     Args:
-        zipcode (int): 5-digit zipcode to scrape
+        zipcode (str): quoted 5-digit zipcode
 
     Returns:
-        Dictionary containing values for all variables for all listings
+        List of data dictionary containing values for all variables for all listings (one dict per listing)
     """
     # Create initial url and get pages
     url, pages, parser = get_url_pages(zipcode)
@@ -218,7 +269,18 @@ def parse(zipcode):
     return data
 
 
-def scrapeCity(city, for_sale=True, save=True):
+def scrapeCity(city, for_sale=False, save=True):
+    """Scrape all active listings within city
+
+    Args:
+        city (str): city name to scrape
+        for_sale (Bool): True to exclude listings not currently for sale
+        save (Bool): True to write data to csv
+
+    Returns:
+        List of data disctionaries corresponding to individual Zillow listings
+
+    """
     # Assign an empty list to store zipcodes in the city
     zips = []
     for zip in zipcodes.filter_by(city=city):
@@ -243,20 +305,34 @@ def scrapeCity(city, for_sale=True, save=True):
         # Save data as a CSV File
         fileName = city.replace(' ', '_')
         pd_data = pd.DataFrame(data, index=None)
+        pd_data['url'] = home_url(pd_data)
         pd_data.set_index('zpid', inplace=True)
         # Filter properties by type
         if for_sale:
             pd_data = pd_data[pd_data['homeStatusForHDP'] == 'FOR_SALE']
             pd_data.drop('homeStatusForHDP', axis=1, inplace=True)
-        pd_data['url'] = home_url(pd_data)
         save_csv(pd_data, fileName)
     # Return list of dicts
     return data
 
 
-headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_5)'
-           'AppleWebKit 537.36 (KHTML, like Gecko) Chrome',
-           'Accept': 'text/html,application/xhtml+xml,application/xml;'
-           'q=0.9,image/webp,*/*;q=0.8'}
+if __name__ == "__main__":
+    # Reading arguments
 
-data = scrapeCity('Los Angeles')
+    argparser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+    argparser.add_argument('city', help='City Name')
+    argparser.add_argument('save', help='Set to False if data should not be saved')
+    for_sale_help = """
+    available options are :
+    True : Only include homes currently for sale,
+    False (default): Include all homes currently listed
+    """
+    argparser.add_argument('for_sale', nargs='?', help=for_sale_help, default=False)
+
+    # Extract arguments and call scrapeCity
+    args = argparser.parse_args()
+    city = args.city
+    save = args.save
+    for_sale = args.for_sale
+    print("Fetching data for %s" % (city))
+    data = scrapeCity(city, for_sale, save)

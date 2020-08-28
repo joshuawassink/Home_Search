@@ -138,13 +138,14 @@ def home_url(df):
     df['base'] = 'https://www.zillow.com/homedetails/'
     df['addr'] = df.streetAddress.str.replace(' ', '-')
     df['url'] = df['base'].str.cat(df['addr'])
-    df['citySt'] = '-Los-Angeles-CA'
+    df['City'] = df.city.str.replace(' ', '-')
+    df['citySt'] = df['City'].str.cat(df.state, sep='-')
     df['suffix'] = '_zpid/'
-    df['url'] = df['url'].str.cat(df['citySt'])
+    df['url'] = df['url'].str.cat(df['citySt'], sep='-')
     df['url'] = df['url'].str.cat(df['zipcode'], sep='-')
     df['url'] = df['url'].str.cat(df['zpid'].astype(str), sep='/')
     url = df['url'].str.cat(df['suffix'])
-    df.drop(['base', 'addr', 'url', 'citySt', 'suffix'], axis=1, inplace=True)
+    df.drop(['base', 'addr', 'url', 'City', 'citySt', 'suffix'], axis=1, inplace=True)
     return url
 
 
@@ -161,7 +162,6 @@ def get_url_pages(zipcode, firstPage=True, i=None):
             Else: [url, parser]
     """
     url = create_url(zipcode, firstPage, i=i)
-    print(url)
     # Request the url data
     req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     # Open and read the data
@@ -229,7 +229,7 @@ def parse(zipcode):
     if pages < 50:
         for i in range(1, pages+1):
             # The next section scrapes data from each page
-            # First, we implement a while loop because Zillow is annoying and doesn't always format their pages consistently. We will loop over each url up to 10 times or until we get the properly formatted data
+            # First, start implement a while loop because Zillow formats html inconsistently. We loop over each url up to 10 times or until we get the properly formatted data
             x = 0
             while x < 1:
                 # Then, try to extract the desired data. If the data is there, increment x to end the while loop
@@ -269,11 +269,12 @@ def parse(zipcode):
     return data
 
 
-def scrapeCity(city, for_sale=False, save=True):
+def scrapeCity(city, state=None, for_sale=False, save=True):
     """Scrape all active listings within city
 
     Args:
         city (str): city name to scrape
+        state (str): ST abbreviation (default = None)
         for_sale (Bool): True to exclude listings not currently for sale
         save (Bool): True to write data to csv
 
@@ -283,8 +284,15 @@ def scrapeCity(city, for_sale=False, save=True):
     """
     # Assign an empty list to store zipcodes in the city
     zips = []
-    for zip in zipcodes.filter_by(city=city):
-        zips.append(zip['zip_code'])
+    # If state not specified, all zipcodes corresponding to city
+    if state == None:
+        for zip in zipcodes.filter_by(city=city):
+            zips.append(zip['zip_code'])
+
+    # Else, all zipcodes corresponding to city-state combination
+    else:
+        for zip in zipcodes.filter_by(city=city, state=state):
+            zips.append(zip['zip_code'])
     printText('There are {} zipcodes in {}'.format(len(zips), city))
     # Assign an empty list to store each listing
     data = []
@@ -316,23 +324,28 @@ def scrapeCity(city, for_sale=False, save=True):
     return data
 
 
+data = scrapeCity('Wellman', 'IA', True, True)
+
 if __name__ == "__main__":
     # Reading arguments
 
     argparser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
-    argparser.add_argument('city', help='City Name')
-    argparser.add_argument('save', help='Set to False if data should not be saved')
+    argparser.add_argument('-cy', '--city', help='City Name', required=True)
+    argparser.add_argument('-st', '--state', help='STATE ABREVIATION')
+    argparser.add_argument(
+        '-sv', '--save', help='Set to False if data should not be saved', default=True)
     for_sale_help = """
     available options are :
     True : Only include homes currently for sale,
     False (default): Include all homes currently listed
     """
-    argparser.add_argument('for_sale', nargs='?', help=for_sale_help, default=False)
+    argparser.add_argument('-fs', '--for_sale', nargs='?', help=for_sale_help, default=False)
 
     # Extract arguments and call scrapeCity
-    args = argparser.parse_args()
-    city = args.city
-    save = args.save
-    for_sale = args.for_sale
+    args = vars(argparser.parse_args())
+    city = args['city']
+    state = args['state']
+    save = args['save']
+    for_sale = args['for_sale']
     print("Fetching data for %s" % (city))
-    data = scrapeCity(city, for_sale, save)
+    data = scrapeCity(city, state, for_sale, save)

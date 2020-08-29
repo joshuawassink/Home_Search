@@ -324,8 +324,6 @@ def scrapeCity(city, state=None, for_sale=False, save=True):
     return data
 
 
-data = scrapeCity('Wellman', 'IA', True, True)
-
 if __name__ == "__main__":
     # Reading arguments
 

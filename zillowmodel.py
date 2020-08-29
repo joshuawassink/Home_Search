@@ -1,6 +1,11 @@
 from sklearn.model_selection import GridSearchCV
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import VotingRegressor
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import LabelEncoder
@@ -22,6 +27,12 @@ from sklearn.svm import SVR
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import Lasso
 from sklearn.linear_model import ElasticNet
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import PowerTransformer
+from sklearn.decomposition import PCA
+from sklearn.decomposition import KernelPCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 import sys
 import sklearn
 import numpy as np
@@ -40,7 +51,7 @@ from zlib import crc32
 """Presets"""
 # Ignore useless warnings (see SciPy issue #5998)
 warnings.filterwarnings(action="ignore", message="^internal gelsd")
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+ZILLOW_PATH = os.path.join("datasets")
 np.random.seed(42)
 
 # To plot pretty figures
@@ -50,15 +61,12 @@ mpl.rc('ytick', labelsize=12)
 
 # Where to save the figures
 PROJECT_ROOT_DIR = "."
-PROJECT_ID = "zillow"
-IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, "images", PROJECT_ID)
-ZILLOW_PATH = os.path.join("datasets", "zillow")
+IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, "images")
 os.makedirs(IMAGES_PATH, exist_ok=True)
-
-# Function to save images
 
 
 def save_fig(fig_id, tight_layout=True, fig_extension="png", resolution=300):
+    """Function to save images"""
     path = os.path.join(IMAGES_PATH, fig_id + "." + fig_extension)
     print("Saving figure", fig_id)
     if tight_layout:
@@ -67,39 +75,45 @@ def save_fig(fig_id, tight_layout=True, fig_extension="png", resolution=300):
 
 
 def load_zillow_data(zillow_path=ZILLOW_PATH, data='zillow'):
-    """Load zillow data
-
-    Args:
-        zillow_path (str): path to the local directory where data will be stored
-
-    Returns:
-        Pandas DataFrame object
-    """
+    """Load zillow data"""
     csv_path = os.path.join(zillow_path, data+'.csv')
     return pd.read_csv(csv_path, index_col='zpid')
+
+
+def RMSE(model, log=False):
+    """Calculate the RMSE from a model"""
+    pred = model.predict(X_test)
+    if log == True:
+        pred = 10 ** pred
+    mse = mean_squared_error(y_test, pred)
+    rmse = np.round(np.sqrt(mse), decimals=3)
+    print(rmse)
 
 
 """Load and prep data"""
 zillow = load_zillow_data(data='Los_Angeles')
 zillow.shape
+zillow.columns
 zillow.head()
 zillow.info()
 zillow.zipcode = pd.to_numeric(zillow.zipcode.str.strip())
-
 # Drop houses with missing price values
 zillow.dropna(subset=['price'], inplace=True)
 zillow = zillow[zillow.price < 5000000]
-zillow.columns
+# Drop wrong types of properties
+zillow = zillow[zillow['homeType'].isin(['SINGLE_FAMILY', 'MULTI_FAMILY', 'CONDO'])]
+
 """Create some spatial plots"""
-zillow.plot(kind='scatter', x='longitude', y='latitude', alpha=.1, s=zillow['lotSize']/1000,
+zillow.plot(kind='scatter', x='longitude', y='latitude', alpha=.1, s=zillow['livingArea']/50,
             label='Square feet', c='zestimate', cmap=plt.get_cmap('jet'), sharex=False, figsize=(10, 7), colorbar=True)
 
 
 # Drop uninformative variables
-zillow_prep = zillow.drop(['imageLink', 'contactPhone', 'isUnmappable', 'rentalPetsFlags', 'mediumImageLink', 'hiResImageLink', 'watchImageLink', 'contactPhoneExtension', 'tvImageLink', 'tvCollectionImageLink', 'price', 'tvHighResImageLink', 'zillowHasRightsToImages', 'moveInReady', 'priceForHDP', 'title', 'group_type', 'openHouse',
-                           'isListingOwnedByCurrentSignedInAgent', 'brokerId', 'grouping_name', 'priceSuffix',
+zillow_prep = zillow.drop(['Unnamed: 0', 'imageLink', 'contactPhone', 'isUnmappable', 'rentalPetsFlags', 'mediumImageLink', 'hiResImageLink', 'watchImageLink', 'contactPhoneExtension', 'tvImageLink', 'tvCollectionImageLink', 'price', 'tvHighResImageLink', 'zillowHasRightsToImages', 'moveInReady', 'priceForHDP', 'title', 'group_type', 'openHouse',
+                           'isListingOwnedByCurrentSignedInAgent', 'brokerId', 'grouping_name', 'priceSuffix', 'zestimate',
                            'desktopWebHdpImageLink', 'hideZestimate', 'streetAddressOnly', 'unit', 'open_house_info', 'providerListingID', 'newConstructionType', 'datePriceChanged', 'dateSold', 'streetAddress', 'city', 'state', 'timeOnZillow', 'currency', 'country', 'priceChange', 'isRentalWithBasePrice',
-                           'isListingClaimedByCurrentSignedInUser', 'lotId', 'lotId64', 'shouldHighlight', 'isPreforeclosureAuction', 'grouping_id', 'comingSoonOnMarketDate'], axis=1)
+                           'isListingClaimedByCurrentSignedInUser', 'lotId', 'lotId64', 'shouldHighlight', 'isPreforeclosureAuction', 'grouping_id', 'comingSoonOnMarketDate', 'url'], axis=1)
+zillow_prep.shape
 # Numerical variables
 num_cols = list(zillow_prep.select_dtypes(include=['float', 'int64']).drop(
     ['videoCount', 'zipcode', 'yearBuilt'], axis=1).columns)
@@ -126,13 +140,15 @@ zillow_prep[num_cols].hist(bins=50, figsize=(20, 15))
 # save_fig("attribute_histogram_plots")
 
 ## Categorical variables ##
-cat_cols = list(zillow_prep.drop(num_cols, axis=1).columns)
-zillow_prep[cat_cols].info()
-
-# Clean up yearBuilt
+# First, clean up yearBuilt
 zillow_prep.yearBuilt.replace(-1, np.nan, inplace=True)
 zillow_prep['quants'] = pd.qcut(zillow_prep.yearBuilt, [0, .25, .5, .75, 1], labels=[1, 2, 3, 4])
 zillow_prep.pivot_table(values='yearBuilt', index=['quants'], aggfunc=[np.mean, 'count'])
+zillow_prep.drop('yearBuilt', inplace=True, axis=1)
+
+# List cat_cols
+cat_cols = list(zillow_prep.drop(num_cols, axis=1).columns)
+zillow_prep[cat_cols].info()
 
 # First, recode and fix missingness
 zillow_prep.loc[zillow_prep['listing_sub_type'].str.contains('FSBO'), 'listing_sub_type'] = 1
@@ -142,21 +158,24 @@ zillow_prep.loc[zillow_prep['priceReduction'].isnull() == 1, 'priceReduction'] =
 zillow_prep.loc[zillow_prep['priceReduction'] != 0, 'priceReduction'] = 1
 zillow_prep.loc[zillow_prep['videoCount'].isnull() == 1, 'videoCount'] = 0
 zillow_prep.loc[zillow_prep['videoCount'] != 0, 'videoCount'] = 1
+zillow_prep[cat_cols].info()
+
 # Cast categorical columns to strings prior to onehot transformation
 le = LabelEncoder()
 zillow_prep[cat_cols] = zillow_prep[cat_cols].applymap(str)
-
 ## Build a pipeline ##
 num_pipeline = Pipeline(steps=[
     ('imputer', KNNImputer()),
-    ('t', PolynomialFeatures(degree=2)),
-    ('std_scaler', StandardScaler())])
+    #('t', PolynomialFeatures(degree=2)),
+    ('std_scaler', StandardScaler()),
+    ('pca', PCA(n_components=.9))])
 
 cat_pipeline = Pipeline(steps=[
     ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
     ('onehot', OneHotEncoder(handle_unknown='ignore'))
 ])
 
+# Instantiate a preprocessor
 preprocessor = ColumnTransformer(
     transformers=[
         ("num", num_pipeline, num_cols),
@@ -167,84 +186,102 @@ X = zillow_prep
 y = zillow.price
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=42)
 X_train.shape
+X.info()
 
+
+# First, check the linear model
+OLS = Pipeline(steps=[('preprocessor', preprocessor),
+                      ('regressor', LinearRegression())])
+OLS.fit(X_train, y_train)
+pred = OLS.predict(X_train)
+np.sqrt(mean_squared_error(y_train, pred))
+
+
+# Parameter grids
+ridge_grid = {'regressor__alpha': np.arange(0.5, 5, 0.5)}
+
+lasso_grid = {'regressor__alpha': np.arange(5, 50, 5)}
+
+enet_grid = {"regressor__alpha": np.arange(.008, .02, .001),
+             "regressor__l1_ratio": np.arange(0.0, 0.5, 0.05),
+             "regressor__max_iter": np.arange(20, 200, 20),
+             }
+
+svm_grid = [
+    # First try linear and rbf kernels
+    {'regressor__C': np.arange(1300, 1600, 25),
+     'regressor__gamma': np.arange(1, 10, 1),
+     'regressor__kernel': ['linear', 'rbf']},
+    # First try linear and rbf kernels
+    {'regressor__C': np.arange(100, 1500, 100),
+        'regressor__gamma': np.arange(1, 10, 1),
+        'regressor__kernel': ['poly'],
+     'regressor_degree': [1, 2, 3, 4]}
+]
+dt_grid = [{
+    'regressor__max_depth': np.arange(5, 50, 5),
+    'regressor__min_samples_split': [5, 10, 50, 100],
+    'regressor__min_samples_leaf': np.arange(3, 27, 3),
+    # 'regressor__min_weight_fraction_leaf' : ,
+    # 'regressor__max_leaf_nodes' :
+}]
+rf_grid = [
+    # try 12 (3×4) combinations of hyperparameters
+    {'regressor__n_estimators': np.arange(
+        10, 100, 10), 'regressor__max_features': np.arange(5, 50, 5)},
+    # then try 6 (2×3) combinations with bootstrap set as False
+    {'regressor__bootstrap': [False], 'regressor__n_estimators': np.arange(
+        5, 15, 1), 'regressor__max_features': np.arange(5, 50, 5)},
+]
 
 # Models to compare
 models = [
-    ['lin_reg', LinearRegression()],
-    ['ridge', Ridge(alpha=1, solver='sag')],
-    ['lasso', Lasso(alpha=.1)],
-    ['enet', ElasticNet(alpha=.1, l1_ratio=.5)],
-    ['svm', SVR()]
-    ['rf', RandomForestRegressor(max_features=8, n_estimators=30)]
+    [Ridge(), ridge_grid],
+    [Lasso(), lasso_grid],
+    [ElasticNet(), enet_grid],
+    [SVR(), svm_grid],
+    #[RandomForestRegressor(), rf_grid],
+    [ExtraTreesRegressor(), rf_grid],
 ]
 
-# Fit a gridsearch to choose RF parameters
-rf = Pipeline(steps=[
-    ('preprocessor', preprocessor),
-    ('regressor', RandomForestRegressor())])
-
-rf_distribs = [
-    # try 12 (3×4) combinations of hyperparameters
-    {'regressor__n_estimators': [3, 10, 30], 'regressor__max_features': [2, 4, 6, 8]},
-    # then try 6 (2×3) combinations with bootstrap set as False
-    {'regressor__bootstrap': [False], 'regressor__n_estimators': [
-        3, 10], 'regressor__max_features': [2, 3, 4]},
-]
-
-svm_distribs = {
-    'kernel': ['linear', 'rbf'],
-    'C': reciprocal(20, 200000),
-    'gamma': expon(scale=1.0),
-}
-
-CV = GridSearchCV(rf, param_grid, cv=5)
-CV.fit(X_train, y_train)
-
-'regressor__max_features': 8, 'regressor__n_estimators': 30
-for mod, model in models:
-    name = mod
-    mod = Pipeline([
+# Use GridSearchCV to assess alterantive models
+results = {}
+for model, grid in models:
+    estimator = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('regressor', model), ])
-    mod.fit(X_train, y_train)
-    rmse = RMSE(mod)
-    print(name)
-    print(rmse)
+        ('regressor', model)
+    ])
+    CV = GridSearchCV(estimator, scoring='neg_root_mean_squared_error',
+                      param_grid=grid, cv=3)
+    results[type(model).__name__] = CV.fit(X_train, y_train)
 
-# Create a regressor to combine with the preprocessor
-model_specs = {}
-for name, reg in [['LE', LinearRegression()], ['RF', RandomForestRegressor()]]:
-    pipe = Pipeline(steps=[
-        ('preprocessor', preprocessor),
-        ('regressor', reg)])
-    pipe.fit(X_train, y_train)
-    pred = pipe.predict(X_test)
-    mse = mean_squared_error(y_test, pred)
-    rmse = np.sqrt(mse)
-    model_specs[name] = np.round(rmse, decimals=4)
-model_specs
+for key in results.keys():
+    print(key, ': ', results[key].best_score_)
+results.keys()
+# Check best performing model
+CV_et = results['ExtraTreesRegressor']
+CV_rf = results['RandomForestRegressor']
+CV_et.best_score_
+RMSE(CV_rf)
 
+# What about an ensemble using the best_params_ from the previous grid search
+# Models to compare
+voting_reg = VotingRegressor(estimators=[('ridge', results['Ridge']), ('lasso', results['Lasso']), (
+    'enet', results['ElasticNet']), ('svr', results['SVR']), ('rf', results['RandomForestRegressor']), ('ET', results['ExtraTreesRegressor'])])
 
-def RMSE(model, log=False):
-
-
-"""Calculate the RMSE from a model"""
-  pred = model.predict(X_test)
-   if log == True:
-        pred = 10 ** pred
-    mse = mean_squared_error(y_test, pred)
-    rmse = np.round(np.sqrt(mse), decimals=3)
-    print(rmse)
-
+voting_reg.fit(X_train, y_train)
+voting_reg.score
+RMSE(voting_reg)
+RMSE(results['RandomForestRegressor'])
+# The votingRegressor underperforms
 
 # Examine predicted versus actual labels
+y_pred = voting_reg.predict(X_test)
 plt.scatter(y_test, y_pred, marker='o', alpha=.1, c=y_test, cmap=plt.get_cmap('jet'))
-
-# Plot the learning curve
 
 
 def plot_learning_curves(model, X, y):
+    """Plot the learning curve"""
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=10)
     train_errors, val_errors = [], []
     for m in range(1, len(X_train)):
@@ -262,3 +299,60 @@ def plot_learning_curves(model, X, y):
 
 
 plot_learning_curves(lin_reg, X_prep, y)
+
+
+"""Clustering"""
+## Build a pipeline ##
+num_pipeline = Pipeline(steps=[
+    ('imputer', KNNImputer()),
+    ('scaler', StandardScaler())])
+
+cat_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+price = zillow['price']
+zillow_cluster = zillow_prep.join(price, how='outer').drop_duplicates()
+num_cols.append('price')
+
+# Instantiate a preprocessor & transform the data
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", num_pipeline, num_cols),
+        ("cat", cat_pipeline, cat_cols)])
+zc_transformed = preprocessor.fit_transform(zillow_cluster)
+
+# Run a Kmeans classifier
+kmeans = KMeans(n_clusters=5, random_state=42)
+y_pred = kmeans.fit_predict(zc_transformed)
+y_pred
+kmeans.cluster_centers_
+kmeans.inertia_
+
+# Let's try multiple numbers of clusters and look for an elbow
+kmeans_per_k = [KMeans(n_clusters=k, random_state=42).fit(zc_transformed)
+                for k in range(1, 10)]
+inertias = [model.inertia_ for model in kmeans_per_k]
+
+plt.figure(figsize=(8, 3.5))
+plt.plot(range(1, 10), inertias, "bo-")
+plt.xlabel("$k$", fontsize=14)
+plt.ylabel("Inertia", fontsize=14)
+"""plt.annotate('Elbow',
+             xy=(4, inertias[3]),
+             xytext=(0.55, 0.55),
+             textcoords='figure fraction',
+             fontsize=16,
+             arrowprops=dict(facecolor='black', shrink=0.1)
+            )
+plt.axis([1, 8.5, 0, 1300])"""
+
+# Plot the silhouette scores
+silhouette_scores = [silhouette_score(zc_transformed, model.labels_)
+                     for model in kmeans_per_k[1:]]
+
+plt.figure(figsize=(8, 3))
+plt.plot(range(2, 10), silhouette_scores, "bo-")
+plt.xlabel("$k$", fontsize=14)
+plt.ylabel("Silhouette score", fontsize=14)
+# Perhaps 4 is the optimal number of clusters.

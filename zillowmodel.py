@@ -129,7 +129,7 @@ zillow_prep[num_cols].hist(bins=50, figsize=(20, 15))
 # Log transform skewed variables
 for col in num_cols:
     span = zillow_prep[col].max()-zillow_prep[col].min()
-    if span > 150:
+    if span > 500:
         x = zillow_prep[col]
         x[x == 0] = .00001
         x = np.log10(x)

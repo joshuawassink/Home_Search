@@ -1,5 +1,4 @@
 import io
-import tailer as tl
 from lxml import html
 import requests
 import unicodecsv as csv
@@ -20,14 +19,26 @@ import pandas as pd
 from zlib import crc32
 from sklearn.model_selection import train_test_split
 import argparse
+from zillowCluster import *
 
 """Presets"""
 # Ignore useless warnings (see SciPy issue #5998)
 warnings.filterwarnings(action="ignore", message="^internal gelsd")
 PROJECT_ROOT_DIR = "."
 ZILLOW_PATH = os.path.join(PROJECT_ROOT_DIR, "datasets")
+IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, "images")
 os.makedirs(ZILLOW_PATH, exist_ok=True)  # Create data repository if necessary
+os.makedirs(IMAGES_PATH, exist_ok=True)  # Create an images repository if necessary
 np.random.seed(42)
+
+
+# To plot pretty figures
+mpl.rc('axes', labelsize=14)
+mpl.rc('xtick', labelsize=12)
+mpl.rc('ytick', labelsize=12)
+# Set styles
+styles = ['o', 's', 'x', 'o', '+', '*', 'X', 'o', '^', 'D', '4']
+plt.style.use('seaborn-dark')
 
 
 def save_csv(df, csv_id):
@@ -72,6 +83,23 @@ def clean(text):
     if text:
         return ' '.join(' '.join(text).split())
     return None
+
+
+def viewClusters(data, from_csv=True):
+    """Identify, describe and visualize clusters in the listing data
+
+    Args:
+        data (df): A dataframe object
+
+    Returns:
+        None
+
+    """
+    # Load listing data
+    df, num_cols, cat_cols, logged = load_zillow_data(data)
+    X = data_prep(num_cols, cat_cols, df=df)
+    kmeans, precipice = K_cluster(X)
+    K_plots(df=df, logged=logged, kmeans=kmeans, num_cols=num_cols, precipice=precipice)
 
 
 def printText(text):
@@ -324,6 +352,42 @@ def scrapeCity(city, state=None, for_sale=False, save=True):
     return data
 
 
+zip_data = parse('52240')
+url, pages, parser = get_url_pages('52240')
+url, parser = get_url_pages('52240', firstPage=False, i=1)
+raw_json_data = parser.xpath(
+    '//script[@data-zrr-shared-data-key="mobileSearchPageStore"]//text()')
+data = []
+x = 0
+while x < 1:
+    try:
+        cleaned_data = clean(raw_json_data).replace('<!--', "").replace("-->", "")
+        # Convert data to json format
+        json_data = json.loads(cleaned_data)
+        jason_data = json_data['searchResults']['listResults']
+        x = 1
+        if i % 2 == 0:
+            sleep(5)
+    # If the data's not there, try again and increment x toward the 10 try maximum.
+    except AttributeError:
+        print('Trying again')
+        x += .1
+    # If the data's not there, try again and increment x toward the 10 try maximum.
+    except KeyError:
+        print('Trying again')
+        x += .1
+# For each result in the list
+try:
+    for zipid in jason_data[:len(jason_data)]:
+        # Extract homedata
+        homedata = zipid['hdpData']['homeInfo']
+        # Append homedata to the master data holder
+        data.append(homedata)
+except KeyError:
+    print('Failed to scrape Page {} in Zipcode {}'.format(i, zipcode))
+    continue  # Skip this page
+
+
 if __name__ == "__main__":
     # Reading arguments
 
@@ -347,3 +411,5 @@ if __name__ == "__main__":
     for_sale = args['for_sale']
     print("Fetching data for %s" % (city))
     data = scrapeCity(city, state, for_sale, save)
+    # Cluster and visualize the data
+    viewClusters(data, from_csv=False)
